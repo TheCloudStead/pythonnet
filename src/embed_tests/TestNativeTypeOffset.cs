@@ -9,22 +9,20 @@ using NUnit.Framework;
 
 using Python.Runtime;
 
-namespace Python.EmbeddingPythonTest
+namespace Python.EmbeddingTest
 {
     public class TestNativeTypeOffset
     {
-        private Py.GILState _gs;
-
-        [SetUp]
+        [OneTimeSetUp]
         public void SetUp()
         {
-            _gs = Py.GIL();
+            PythonEngine.Initialize();
         }
 
-        [TearDown]
+        [OneTimeTearDown]
         public void Dispose()
         {
-            _gs.Dispose();
+            PythonEngine.Shutdown();
         }
 
         /// <summary>
@@ -34,11 +32,13 @@ namespace Python.EmbeddingPythonTest
         public void LoadNativeTypeOffsetClass()
         {
             PyObject sys = Py.Import("sys");
-            string attributeName = "abiflags";
-            if (sys.HasAttr(attributeName) && !string.IsNullOrEmpty(sys.GetAttr(attributeName).ToString()))
+            // We can safely ignore the "m" abi flag
+            var abiflags = sys.HasAttr("abiflags") ? sys.GetAttr("abiflags").ToString() : "";
+            abiflags = abiflags.Replace("m", "");
+            if (!string.IsNullOrEmpty(abiflags))
             {
                 string typeName = "Python.Runtime.NativeTypeOffset, Python.Runtime";
-                Assert.NotNull(Type.GetType(typeName), $"{typeName} does not exist and sys.{attributeName} is not empty");
+                Assert.NotNull(Type.GetType(typeName), $"{typeName} does not exist and sys.abiflags={abiflags}");
             }
         }
     }

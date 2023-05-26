@@ -1,7 +1,5 @@
 /src/runtime/interopNative.cs
-
-# Configuration data
-configured.props
+/src/perf_tests/baseline/
 
 # General binaries and Build results
 *.dll

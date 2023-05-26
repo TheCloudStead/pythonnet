@@ -37,7 +37,7 @@ class CmTest:
         return 5 / 0
 
 a = CmTest()
-", null, locals.Handle);
+", null, locals);
 
             var a = locals.GetItem("a");
 
@@ -51,7 +51,7 @@ a = CmTest()
             catch (PythonException e)
             {
                 TestContext.Out.WriteLine(e.Message);
-                Assert.IsTrue(e.Message.Contains("ZeroDivisionError"));
+                Assert.IsTrue(e.Type.Name == "ZeroDivisionError");
             }
         }
 
@@ -76,7 +76,7 @@ class CmTest:
         return 5 / 0
 
 a = CmTest()
-", null, locals.Handle);
+", null, locals);
 
             var a = locals.GetItem("a");
             Py.With(a, cmTest =>

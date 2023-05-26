@@ -1,5 +1,5 @@
-
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,53 +11,88 @@ namespace Python.EmbeddingTest
 {
     public class TestInterrupt
     {
-        private IntPtr _threadState;
-
+        PyObject threading;
         [OneTimeSetUp]
         public void SetUp()
         {
             PythonEngine.Initialize();
-            _threadState = PythonEngine.BeginAllowThreads();
+            // workaround for assert tlock.locked() warning
+            threading = Py.Import("threading");
         }
 
         [OneTimeTearDown]
         public void Dispose()
         {
-            PythonEngine.EndAllowThreads(_threadState);
+            threading.Dispose();
             PythonEngine.Shutdown();
+        }
+
+        [Test]
+        public void PythonThreadIDStable()
+        {
+            long pythonThreadID = 0;
+            long pythonThreadID2 = 0;
+            var asyncCall = Task.Factory.StartNew(() =>
+            {
+                using (Py.GIL())
+                {
+                    Interlocked.Exchange(ref pythonThreadID, (long)PythonEngine.GetPythonThreadID());
+                    Interlocked.Exchange(ref pythonThreadID2, (long)PythonEngine.GetPythonThreadID());
+                }
+            });
+
+            var timeout = Stopwatch.StartNew();
+
+            IntPtr threadState = PythonEngine.BeginAllowThreads();
+            while (Interlocked.Read(ref pythonThreadID) == 0 || Interlocked.Read(ref pythonThreadID2) == 0)
+            {
+                Assert.Less(timeout.Elapsed, TimeSpan.FromSeconds(5), "thread IDs were not assigned in time");
+            }
+            PythonEngine.EndAllowThreads(threadState);
+
+            Assert.IsTrue(asyncCall.Wait(TimeSpan.FromSeconds(5)), "Async thread has not finished in time");
+
+            Assert.AreEqual(pythonThreadID, pythonThreadID2);
+            Assert.NotZero(pythonThreadID);
         }
 
         [Test]
         public void InterruptTest()
         {
-            int runSimpleStringReturnValue = int.MinValue;
-            ulong pythonThreadID = ulong.MinValue;
-            Task.Factory.StartNew(() =>
+            long pythonThreadID = 0;
+            var asyncCall = Task.Factory.StartNew(() =>
             {
                 using (Py.GIL())
                 {
-                    pythonThreadID = PythonEngine.GetPythonThreadID();
-                    runSimpleStringReturnValue = PythonEngine.RunSimpleString(@"
-import time
+                    Interlocked.Exchange(ref pythonThreadID, (long)PythonEngine.GetPythonThreadID());
+                    return PythonEngine.RunSimpleString(@"
+try:
+  import time
 
-while True:
-    time.sleep(0.2)");
+  while True:
+    time.sleep(0.2)
+except KeyboardInterrupt:
+  pass");
                 }
             });
 
-            Thread.Sleep(200);
+            var timeout = Stopwatch.StartNew();
 
-            Assert.AreNotEqual(ulong.MinValue, pythonThreadID);
-
-            using (Py.GIL())
+            IntPtr threadState = PythonEngine.BeginAllowThreads();
+            while (Interlocked.Read(ref pythonThreadID) == 0)
             {
-                int interruptReturnValue = PythonEngine.Interrupt(pythonThreadID);
-                Assert.AreEqual(1, interruptReturnValue);
+                Assert.Less(timeout.Elapsed, TimeSpan.FromSeconds(5), "thread ID was not assigned in time");
             }
+            PythonEngine.EndAllowThreads(threadState);
 
-            Thread.Sleep(300);
+            int interruptReturnValue = PythonEngine.Interrupt((ulong)Interlocked.Read(ref pythonThreadID));
+            Assert.AreEqual(1, interruptReturnValue);
 
-            Assert.AreEqual(-1, runSimpleStringReturnValue);
+            threadState = PythonEngine.BeginAllowThreads();
+            Assert.IsTrue(asyncCall.Wait(TimeSpan.FromSeconds(5)), "Async thread was not interrupted in time");
+            PythonEngine.EndAllowThreads(threadState);
+
+            Assert.AreEqual(0, asyncCall.Result);
         }
     }
 }

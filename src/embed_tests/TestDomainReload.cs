@@ -67,14 +67,6 @@ namespace Python.EmbeddingTest
             RunAssemblyAndUnload("test2");
             Assert.That(PyRuntime.Py_IsInitialized() != 0,
                 "On soft-shutdown mode, Python runtime should still running");
-
-            if (PythonEngine.DefaultShutdownMode == ShutdownMode.Normal)
-            {
-                // The default mode is a normal mode,
-                // it should shutdown the Python VM avoiding influence other tests.
-                PyRuntime.PyGILState_Ensure();
-                PyRuntime.Py_Finalize();
-            }
         }
 
         #region CrossDomainObject
@@ -107,8 +99,7 @@ obj.Field = 10
                         {
                             Debug.Assert(obj.AsManagedObject(type).GetType() == type);
                             // We only needs its Python handle
-                            PyRuntime.XIncref(obj.Handle);
-                            return obj.Handle;
+                            return new NewReference(obj).DangerousMoveToPointer();
                         }
                     }
                 }
@@ -127,16 +118,16 @@ obj.Field = 10
             {
                 // handle refering a clr object created in previous domain,
                 // it should had been deserialized and became callable agian.
-                IntPtr handle = (IntPtr)arg;
+                using var handle = NewReference.DangerousFromPointer((IntPtr)arg);
                 try
                 {
                     using (Py.GIL())
                     {
-                        IntPtr tp = Runtime.Runtime.PyObject_TYPE(handle);
-                        IntPtr tp_clear = Marshal.ReadIntPtr(tp, TypeOffset.tp_clear);
+                        BorrowedReference tp = Runtime.Runtime.PyObject_TYPE(handle.Borrow());
+                        IntPtr tp_clear = Util.ReadIntPtr(tp, TypeOffset.tp_clear);
                         Assert.That(tp_clear, Is.Not.Null);
 
-                        using (PyObject obj = new PyObject(handle))
+                        using (PyObject obj = new PyObject(handle.Steal()))
                         {
                             obj.InvokeMethod("Method");
                             obj.InvokeMethod("StaticMethod");
@@ -178,116 +169,6 @@ obj.Field += 10
         }
 
         #endregion
-
-        #region Tempary tests
-
-        // https://github.com/pythonnet/pythonnet/pull/1074#issuecomment-596139665
-        [Test]
-        public void CrossReleaseBuiltinType()
-        {
-            void ExecTest()
-            {
-                try
-                {
-                    PythonEngine.Initialize();
-                    var numRef = CreateNumReference();
-                    Assert.True(numRef.IsAlive);
-                    PythonEngine.Shutdown(); // <- "run" 1 ends
-                    PythonEngine.Initialize(); // <- "run" 2 starts
-
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers(); // <- this will put former `num` into Finalizer queue
-                    Finalizer.Instance.Collect();
-                    // ^- this will call PyObject.Dispose, which will call XDecref on `num.Handle`,
-                    // but Python interpreter from "run" 1 is long gone, so it will corrupt memory instead.
-                    Assert.False(numRef.IsAlive);
-                }
-                finally
-                {
-                    PythonEngine.Shutdown();
-                }
-            }
-
-            var errorArgs = new List<Finalizer.ErrorArgs>();
-            void ErrorHandler(object sender, Finalizer.ErrorArgs e)
-            {
-                errorArgs.Add(e);
-            }
-            Finalizer.Instance.ErrorHandler += ErrorHandler;
-            try
-            {
-                for (int i = 0; i < 10; i++)
-                {
-                    ExecTest();
-                }
-            }
-            finally
-            {
-                Finalizer.Instance.ErrorHandler -= ErrorHandler;
-            }
-            Assert.AreEqual(errorArgs.Count, 0);
-        }
-
-        [Test]
-        public void CrossReleaseCustomType()
-        {
-            void ExecTest()
-            {
-                try
-                {
-                    PythonEngine.Initialize();
-                    var objRef = CreateConcreateObject();
-                    Assert.True(objRef.IsAlive);
-                    PythonEngine.Shutdown(); // <- "run" 1 ends
-                    PythonEngine.Initialize(); // <- "run" 2 starts
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    Finalizer.Instance.Collect();
-                    Assert.False(objRef.IsAlive);
-                }
-                finally
-                {
-                    PythonEngine.Shutdown();
-                }
-            }
-
-            var errorArgs = new List<Finalizer.ErrorArgs>();
-            void ErrorHandler(object sender, Finalizer.ErrorArgs e)
-            {
-                errorArgs.Add(e);
-            }
-            Finalizer.Instance.ErrorHandler += ErrorHandler;
-            try
-            {
-                for (int i = 0; i < 10; i++)
-                {
-                    ExecTest();
-                }
-            }
-            finally
-            {
-                Finalizer.Instance.ErrorHandler -= ErrorHandler;
-            }
-            Assert.AreEqual(errorArgs.Count, 0);
-        }
-
-        private static WeakReference CreateNumReference()
-        {
-            var num = 3216757418.ToPython();
-            Assert.AreEqual(num.Refcount, 1);
-            WeakReference numRef = new WeakReference(num, false);
-            return numRef;
-        }
-
-        private static WeakReference CreateConcreateObject()
-        {
-            var obj = new Domain.MyClass().ToPython();
-            Assert.AreEqual(obj.Refcount, 1);
-            WeakReference numRef = new WeakReference(obj, false);
-            return numRef;
-        }
-
-        #endregion Tempary tests
 
         /// <summary>
         /// This is a magic incantation required to run code in an application
@@ -332,7 +213,7 @@ obj.Field += 10
             // assembly (and Python .NET) to reside
             var theProxy = CreateInstanceInstanceAndUnwrap<Proxy>(domain);
 
-            theProxy.Call("InitPython", ShutdownMode.Soft);
+            theProxy.Call(nameof(PythonRunner.InitPython), PyRuntime.PythonDLL);
             // From now on use the Proxy to call into the new assembly
             theProxy.RunPython();
 
@@ -400,7 +281,7 @@ obj.Field += 10
                 try
                 {
                     var theProxy = CreateInstanceInstanceAndUnwrap<Proxy>(domain);
-                    theProxy.Call("InitPython", ShutdownMode.Reload);
+                    theProxy.Call(nameof(PythonRunner.InitPython), PyRuntime.PythonDLL);
 
                     var caller = CreateInstanceInstanceAndUnwrap<T1>(domain);
                     arg = caller.Execute(arg);
@@ -418,7 +299,7 @@ obj.Field += 10
                 try
                 {
                     var theProxy = CreateInstanceInstanceAndUnwrap<Proxy>(domain);
-                    theProxy.Call("InitPython", ShutdownMode.Reload);
+                    theProxy.Call(nameof(PythonRunner.InitPython), PyRuntime.PythonDLL);
 
                     var caller = CreateInstanceInstanceAndUnwrap<T2>(domain);
                     caller.Execute(arg);
@@ -429,10 +310,8 @@ obj.Field += 10
                     AppDomain.Unload(domain);
                 }
             }
-            if (PythonEngine.DefaultShutdownMode == ShutdownMode.Normal)
-            {
-                Assert.IsTrue(PyRuntime.Py_IsInitialized() == 0);
-            }
+
+            Assert.IsTrue(PyRuntime.Py_IsInitialized() != 0);
         }
     }
 
@@ -478,9 +357,10 @@ obj.Field += 10
 
         private static IntPtr _state;
 
-        public static void InitPython(ShutdownMode mode)
+        public static void InitPython(string dllName)
         {
-            PythonEngine.Initialize(mode: mode);
+            PyRuntime.PythonDLL = dllName;
+            PythonEngine.Initialize();
             _state = PythonEngine.BeginAllowThreads();
         }
 
@@ -493,15 +373,7 @@ obj.Field += 10
         public static void ShutdownPythonCompletely()
         {
             PythonEngine.EndAllowThreads(_state);
-            // XXX: Reload mode will reserve clr objects after `Runtime.Shutdown`,
-            // if it used a another mode(the default mode) in other tests,
-            // when other tests trying to access these reserved objects, it may cause Domain exception,
-            // thus it needs to reduct to Soft mode to make sure all clr objects remove from Python.
-            var defaultMode = PythonEngine.DefaultShutdownMode;
-            if (defaultMode != ShutdownMode.Reload)
-            {
-                PythonEngine.ShutdownMode = defaultMode;
-            }
+
             PythonEngine.Shutdown();
         }
 

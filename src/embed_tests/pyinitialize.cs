@@ -40,10 +40,32 @@ namespace Python.EmbeddingTest
             {
                 using (var argv = new PyList(Runtime.Runtime.PySys_GetObject("argv")))
                 {
-                    Assert.AreEqual(args[0], argv[0].ToString());
-                    Assert.AreEqual(args[1], argv[1].ToString());
+                    using var v0 = argv[0];
+                    using var v1 = argv[1];
+                    Assert.AreEqual(args[0], v0.ToString());
+                    Assert.AreEqual(args[1], v1.ToString());
                 }
             }
+        }
+
+        // regression test for https://github.com/pythonnet/pythonnet/issues/1561
+        [Test]
+        public void ImportClassShutdownRefcount()
+        {
+            PythonEngine.Initialize();
+
+            PyObject ns = Py.Import(typeof(ImportClassShutdownRefcountClass).Namespace);
+            PyObject cls = ns.GetAttr(nameof(ImportClassShutdownRefcountClass));
+            BorrowedReference clsRef = cls.Reference;
+#pragma warning disable CS0618 // Type or member is obsolete
+            cls.Leak();
+#pragma warning restore CS0618 // Type or member is obsolete
+            ns.Dispose();
+
+            Assert.Less(Runtime.Runtime.Refcount32(clsRef), 256);
+
+            PythonEngine.Shutdown();
+            Assert.Greater(Runtime.Runtime.Refcount32(clsRef), 0);
         }
 
         /// <summary>
@@ -77,15 +99,6 @@ namespace Python.EmbeddingTest
                 PythonEngine.RunSimpleString("Int32(1)");
             }
             PythonEngine.Shutdown();
-        }
-
-        [Test]
-        public void TestScopeIsShutdown()
-        {
-            PythonEngine.Initialize();
-            var scope = PyScopeManager.Global.Create("test");
-            PythonEngine.Shutdown();
-            Assert.That(PyScopeManager.Global.Contains("test"), Is.False);
         }
 
         /// <summary>
@@ -138,46 +151,7 @@ namespace Python.EmbeddingTest
             // Wrong:   (4 * 2) + 1 + 1 + 1 = 11
             Assert.That(shutdown_count, Is.EqualTo(12));
         }
-
-        [Test]
-        public static void TestRunExitFuncs()
-        {
-            if (Runtime.Runtime.GetDefaultShutdownMode() == ShutdownMode.Normal)
-            {
-                // If the runtime using the normal mode,
-                // callback registered by atexit will be called after we release the clr information,
-                // thus there's no chance we can check it here.
-                Assert.Ignore("Skip on normal mode");
-            }
-            Runtime.Runtime.Initialize();
-            PyObject atexit;
-            try
-            {
-                atexit = Py.Import("atexit");
-            }
-            catch (PythonException e)
-            {
-                string msg = e.ToString();
-                Runtime.Runtime.Shutdown();
-
-                if (e.IsMatches(Exceptions.ImportError))
-                {
-                    Assert.Ignore("no atexit module");
-                }
-                else
-                {
-                    Assert.Fail(msg);
-                }
-                return;
-            }
-            bool called = false;
-            Action callback = () =>
-            {
-                called = true;
-            };
-            atexit.InvokeMethod("register", callback.ToPython());
-            Runtime.Runtime.Shutdown();
-            Assert.True(called);
-        }
     }
+
+    public class ImportClassShutdownRefcountClass { }
 }

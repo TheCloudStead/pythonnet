@@ -8,9 +8,9 @@ namespace Python.Runtime.Codecs
     /// <summary>
     /// Represents a group of <see cref="IPyObjectDecoder"/>s. Useful to group them by priority.
     /// </summary>
-    public sealed class DecoderGroup: IPyObjectDecoder, IEnumerable<IPyObjectDecoder>
+    public sealed class DecoderGroup: IPyObjectDecoder, IEnumerable<IPyObjectDecoder>, IDisposable
     {
-        readonly List<IPyObjectDecoder> decoders = new List<IPyObjectDecoder>();
+        readonly List<IPyObjectDecoder> decoders = new();
 
         /// <summary>
         /// Add specified decoder to the group
@@ -27,10 +27,10 @@ namespace Python.Runtime.Codecs
         public void Clear() => this.decoders.Clear();
 
         /// <inheritdoc />
-        public bool CanDecode(PyObject objectType, Type targetType)
+        public bool CanDecode(PyType objectType, Type targetType)
             => this.decoders.Any(decoder => decoder.CanDecode(objectType, targetType));
         /// <inheritdoc />
-        public bool TryDecode<T>(PyObject pyObj, out T value)
+        public bool TryDecode<T>(PyObject pyObj, out T? value)
         {
             if (pyObj is null) throw new ArgumentNullException(nameof(pyObj));
 
@@ -46,6 +46,15 @@ namespace Python.Runtime.Codecs
         /// <inheritdoc />
         public IEnumerator<IPyObjectDecoder> GetEnumerator() => this.decoders.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => this.decoders.GetEnumerator();
+
+        public void Dispose()
+        {
+            foreach (var decoder in this.decoders.OfType<IDisposable>())
+            {
+                decoder.Dispose();
+            }
+            this.decoders.Clear();
+        }
     }
 
     public static class DecoderGroupExtensions
@@ -56,9 +65,9 @@ namespace Python.Runtime.Codecs
         /// that can decode from <paramref name="objectType"/> to <paramref name="targetType"/>,
         /// or <c>null</c> if a matching decoder can not be found.
         /// </summary>
-        public static IPyObjectDecoder GetDecoder(
+        public static IPyObjectDecoder? GetDecoder(
             this IPyObjectDecoder decoder,
-            PyObject objectType, Type targetType)
+            PyType objectType, Type targetType)
         {
             if (decoder is null) throw new ArgumentNullException(nameof(decoder));
 

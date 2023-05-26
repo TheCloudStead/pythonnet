@@ -50,7 +50,7 @@ namespace Python.EmbeddingTest
             };
 
             Assert.IsFalse(called, "The event handler was called before it was installed");
-            Finalizer.Instance.CollectOnce += handler;
+            Finalizer.Instance.BeforeCollect += handler;
 
             IntPtr pyObj = MakeAGarbage(out var shortWeak, out var longWeak);
             FullGCCollect();
@@ -81,7 +81,7 @@ namespace Python.EmbeddingTest
             }
             finally
             {
-                Finalizer.Instance.CollectOnce -= handler;
+                Finalizer.Instance.BeforeCollect -= handler;
             }
             Assert.IsTrue(called, "The event handler was not called during finalization");
             Assert.GreaterOrEqual(objectCount, 1);
@@ -101,7 +101,17 @@ namespace Python.EmbeddingTest
 
             PythonEngine.Shutdown();
             garbage = Finalizer.Instance.GetCollectedObjects();
-            Assert.IsEmpty(garbage);
+
+            if (garbage.Count > 0)
+            {
+                PythonEngine.Initialize();
+                string objects = string.Join("\n", garbage.Select(ob =>
+                {
+                    var obj = new PyObject(new BorrowedReference(ob));
+                    return $"{obj} [{obj.GetPythonType()}@{obj.Handle}]";
+                }));
+                Assert.Fail("Garbage is not empty:\n" + objects);
+            }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)] // ensure lack of references to obj
@@ -111,7 +121,7 @@ namespace Python.EmbeddingTest
             IntPtr handle = IntPtr.Zero;
             WeakReference @short = null, @long = null;
             // must create Python object in the thread where we have GIL
-            IntPtr val = PyLong.FromLong(1024);
+            IntPtr val = Runtime.Runtime.PyLong_FromLongLong(1024).DangerousMoveToPointerOrNull();
             // must create temp object in a different thread to ensure it is not present
             // when conservatively scanning stack for GC roots.
             // see https://xamarin.github.io/bugzilla-archives/17/17593/bug.html
@@ -173,7 +183,7 @@ namespace Python.EmbeddingTest
             bool oldState = Finalizer.Instance.Enable;
             try
             {
-                using (PyObject gcModule = PythonEngine.ImportModule("gc"))
+                using (PyObject gcModule = PyModule.Import("gc"))
                 using (PyObject pyCollect = gcModule.GetAttr("collect"))
                 {
                     long span1 = CompareWithFinalizerOn(pyCollect, false);
@@ -202,7 +212,9 @@ namespace Python.EmbeddingTest
                 Assert.AreEqual(ptr, e.Handle);
                 Assert.AreEqual(2, e.ImpactedObjects.Count);
                 // Fix for this test, don't do this on general environment
-                Runtime.Runtime.XIncref(e.Handle);
+#pragma warning disable CS0618 // Type or member is obsolete
+                Runtime.Runtime.XIncref(e.Reference);
+#pragma warning restore CS0618 // Type or member is obsolete
                 return false;
             };
             Finalizer.Instance.IncorrectRefCntResolver += handler;
@@ -224,8 +236,9 @@ namespace Python.EmbeddingTest
         {
             PyString s1 = new PyString("test_string");
             // s2 steal a reference from s1
-            PyString s2 = new PyString(s1.Handle);
-            return s1.Handle;
+            IntPtr address = s1.Reference.DangerousGetAddress();
+            PyString s2 = new (StolenReference.DangerousFromPointer(address));
+            return address;
         }
     }
 }

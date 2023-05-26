@@ -8,6 +8,7 @@ using System.Text;
 using NUnit.Framework;
 
 using Python.Runtime;
+using Python.Test;
 
 namespace Python.PythonTestsRunner
 {
@@ -32,8 +33,8 @@ namespace Python.PythonTestsRunner
         static IEnumerable<string[]> PythonTestCases()
         {
             // Add the test that you want to debug here.
-            yield return new[] { "test_enum", "test_enum_standard_attrs" };
-            yield return new[] { "test_generic", "test_missing_generic_type" };
+            yield return new[] { "test_indexer", "test_boolean_indexer" };
+            yield return new[] { "test_delegate", "test_bool_delegate" };
         }
 
         /// <summary>
@@ -50,7 +51,7 @@ namespace Python.PythonTestsRunner
             {
                 folder = Path.GetDirectoryName(folder);
             }
-            folder = Path.Combine(folder, "tests");
+            folder = Path.Combine(folder, "..", "tests");
             string path = Path.Combine(folder, testFile + ".py");
             if (!File.Exists(path)) throw new FileNotFoundException("Cannot find test file", path);
 

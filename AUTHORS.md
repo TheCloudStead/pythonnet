@@ -55,6 +55,7 @@
 -   Meinrad Recheis ([@henon](https://github.com/henon))
 -   Mohamed Koubaa ([@koubaa](https://github.com/koubaa))
 -   Patrick Stewart ([@patstew](https://github.com/patstew))
+-   Peter Kese ([@pkese](https://github.com/pkese))
 -   Raphael Nestler ([@rnestler](https://github.com/rnestler))
 -   Rickard Holmberg ([@rickardraysearch](https://github.com/rickardraysearch))
 -   Sam Winstanley ([@swinstanley](https://github.com/swinstanley))
@@ -83,3 +84,4 @@
 -   ([@DanBarzilian](https://github.com/DanBarzilian))
 -   ([@alxnull](https://github.com/alxnull))
 -   ([@gpetrou](https://github.com/gpetrou))
+-   Ehsan Iran-Nejad ([@eirannejad](https://github.com/eirannejad))

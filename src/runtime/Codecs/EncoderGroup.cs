@@ -8,9 +8,9 @@ namespace Python.Runtime.Codecs
     /// <summary>
     /// Represents a group of <see cref="IPyObjectDecoder"/>s. Useful to group them by priority.
     /// </summary>
-    public sealed class EncoderGroup: IPyObjectEncoder, IEnumerable<IPyObjectEncoder>
+    public sealed class EncoderGroup: IPyObjectEncoder, IEnumerable<IPyObjectEncoder>, IDisposable
     {
-        readonly List<IPyObjectEncoder> encoders = new List<IPyObjectEncoder>();
+        readonly List<IPyObjectEncoder> encoders = new();
 
         /// <summary>
         /// Add specified encoder to the group
@@ -28,7 +28,7 @@ namespace Python.Runtime.Codecs
         /// <inheritdoc />
         public bool CanEncode(Type type) => this.encoders.Any(encoder => encoder.CanEncode(type));
         /// <inheritdoc />
-        public PyObject TryEncode(object value)
+        public PyObject? TryEncode(object value)
         {
             if (value is null) throw new ArgumentNullException(nameof(value));
 
@@ -47,6 +47,15 @@ namespace Python.Runtime.Codecs
         /// <inheritdoc />
         public IEnumerator<IPyObjectEncoder> GetEnumerator() => this.encoders.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => this.encoders.GetEnumerator();
+
+        public void Dispose()
+        {
+            foreach (var encoder in this.encoders.OfType<IDisposable>())
+            {
+                encoder.Dispose();
+            }
+            this.encoders.Clear();
+        }
     }
 
     public static class EncoderGroupExtensions
